@@ -71,7 +71,7 @@ export default class BahamutSource extends BaseSource {
               "Content-Type": "application/json",
               "User-Agent": "Anime/2.29.2 (7N5749MM3F.tw.com.gamer.anime; build:972; iOS 26.0.0) Alamofire/5.6.4",
             },
-			retries: 1,
+			retries: 3,
           });
 
           // 如果原始搜索有结果，中断 TMDB 流程
@@ -89,7 +89,7 @@ export default class BahamutSource extends BaseSource {
                 a._searchUsedTitle = traditionalizedKeyword;
               } catch (e) {}
             }
-            log("info", `bahamutSearchresp (original): ${JSON.stringify(anime)}`);
+            log("info", `[Bahamut] bahamutSearchresp (original): ${JSON.stringify(anime)}`);
             log("info", `[Bahamut] 返回 ${anime.length} 条结果 (source: original)`);
             return { success: true, data: anime, source: 'original' };
           }
@@ -136,7 +136,7 @@ export default class BahamutSource extends BaseSource {
               "User-Agent": "Anime/2.29.2 (7N5749MM3F.tw.com.gamer.anime; build:972; iOS 26.0.0) Alamofire/5.6.4",
             },
             signal: tmdbAbortController.signal,
-            retries: 1,
+            retries: 3,
           });
 
           if (tmdbResp && tmdbResp.data && tmdbResp.data.anime && tmdbResp.data.anime.length > 0) {
@@ -148,7 +148,7 @@ export default class BahamutSource extends BaseSource {
                 a._tmdbCnAlias = cnAlias;
               } catch (e) {}
             }
-            log("info", `bahamutSearchresp (TMDB): ${JSON.stringify(anime)}`);
+            log("info", `[Bahamut] bahamutSearchresp (TMDB): ${JSON.stringify(anime)}`);
             log("info", `[Bahamut] 返回 ${anime.length} 条结果 (source: tmdb)`);
             return { success: true, data: anime, source: 'tmdb' };
           }
@@ -160,8 +160,13 @@ export default class BahamutSource extends BaseSource {
             log("info", "[Bahamut] 原始搜索成功，中断日语原名搜索");
             return { success: false, source: 'tmdb', aborted: true };
           }
-          // 抛出其他错误（例如 httpGet 超时）
-          throw error;
+          // TMDB搜索失败不阻塞原始搜索结果，与originalSearchPromise保持一致的错误处理策略
+          log("error", "[Bahamut] TMDB搜索失败:", {
+            message: error.message,
+            name: error.name,
+            stack: error.stack,
+          });
+          return { success: false, source: 'tmdb' };
         }
       })();
 
@@ -216,7 +221,7 @@ export default class BahamutSource extends BaseSource {
       return finalResults;
     } catch (error) {
       // 捕获请求中的错误
-      log("error", "getBahamutAnimes error:", {
+      log("error", "[Bahamut] getBahamutAnimes error:", {
         message: error.message,
         name: error.name,
         stack: error.stack,
@@ -235,28 +240,31 @@ export default class BahamutSource extends BaseSource {
           "Content-Type": "application/json",
           "User-Agent": "Anime/2.29.2 (7N5749MM3F.tw.com.gamer.anime; build:972; iOS 26.0.0) Alamofire/5.6.4",
         },
-		retries: 1,
+		retries: 3,
       });
 
       // 判断 resp 和 resp.data 是否存在
       if (!resp || !resp.data) {
-        log("info", "getBahamutEposides: 请求失败或无数据返回");
+        log("info", "[Bahamut] getBahamutEposides: 请求失败或无数据返回");
         return [];
       }
 
       // 判断 seriesData 是否存在
       if (!resp.data.data || !resp.data.data.video || !resp.data.data.anime) {
-        log("info", "getBahamutEposides: video 或 anime 不存在");
+        log("info", "[Bahamut] getBahamutEposides: video 或 anime 不存在");
         return [];
       }
 
-      // 正常情况下输出 JSON 字符串
-      log("info", `getBahamutEposides: ${JSON.stringify(resp.data.data)}`);
+      // 正常情况下输出调试所需的关键字段，对齐其他源做法避免全量输出 contentHtml 等冗余数据
+      const { video: vData, anime: aData } = resp.data.data;
+      log("info", `[Bahamut] getBahamutEposides: videoSn=${vData.videoSn}, ` +
+        `animeSn=${aData.animeSn}, title=${aData.title}, ` +
+        `totalEpisode=${aData.totalEpisode}, episodes=${JSON.stringify(aData.episodes)}`);
 
       return resp.data.data;
     } catch (error) {
       // 捕获请求中的错误
-      log("error", "getBahamutEposides error:", {
+      log("error", "[Bahamut] getBahamutEposides error:", {
         message: error.message,
         name: error.name,
         stack: error.stack,
@@ -398,6 +406,8 @@ export default class BahamutSource extends BaseSource {
           episodeCache.set(cacheKey, this.getEpisodes(anime.video_sn));
         }
         const epData = await episodeCache.get(cacheKey);
+        // getEpisodes 网络失败时返回空数组而非对象，必须校验结构有效性
+        if (!epData || typeof epData !== 'object' || Array.isArray(epData)) return null;
         const detail = epData.video;
 
         // episodes 可能在不同键中（如 "0"、"1"），电影类内容尤其常见
@@ -504,7 +514,7 @@ export default class BahamutSource extends BaseSource {
           "Content-Type": "application/json",
           "User-Agent": "Anime/2.29.2 (7N5749MM3F.tw.com.gamer.anime; build:972; iOS 26.0.0) Alamofire/5.6.4",
         },
-        retries: 1,
+        retries: 3,
       });
 
       // 将当前请求的 episodes 拼接到总数组
@@ -515,7 +525,7 @@ export default class BahamutSource extends BaseSource {
       return danmus;
     } catch (error) {
       // 捕获请求中的错误
-      log("error", "fetchBahamutEpisodeDanmu error:", {
+      log("error", "[Bahamut] fetchBahamutEpisodeDanmu error:", {
         message: error.message,
         name: error.name,
         stack: error.stack,
@@ -525,7 +535,7 @@ export default class BahamutSource extends BaseSource {
   }
 
   async getEpisodeDanmuSegments(id) {
-    log("info", "获取巴哈姆特弹幕分段列表...", id);
+    log("info", "[Bahamut] 获取巴哈姆特弹幕分段列表...", id);
 
     return new SegmentListResponse({
       "type": "bahamut",
